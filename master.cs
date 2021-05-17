@@ -7,28 +7,32 @@ using UnityEngine.UI;
 
 public class master : MonoBehaviour
 {
-    public GameObject lp, parent, lineStatic, lineShifted, pointPrefab;
+    public GameObject lp, parent, lineStatic, lineShifted, pointPrefab, lightConePrefab;
     public speedMaster sm;
     public TextMeshProUGUI positionDisplay;
-    public Vector2 vertex, lineEndStatic, lineEndShifted;
-    public bool shifted = false, inTermsC = true;
+    public Vector2 lineEndStatic, lineEndShifted, drEnd, dlEnd, yEnd;
+    public List<GameObject> axises = new List<GameObject>(); // can be list since we dont need to reference any specific one/we change them at the same time
+    public bool shifted = false, inTermsC = true, showTimeLines = false, showLightCones = false;
     public Dictionary<int, point> points = new Dictionary<int, point>();
     void Start()
     {
         // establish grid
 
         // x axis
-        fastCreateLine(new Vector2(-8, 0), new Vector2(8, 0), Color.gray);
+        fastCreateLine(new Vector2(-8, 0), new Vector2(8, 0), Color.black);
 
         // y axis
-        fastCreateLine(new Vector2(0, 0), new Vector2(0, 8.25f), Color.gray);
+        fastCreateLine(new Vector2(0, 0), new Vector2(0, 8.25f), Color.black);
+        yEnd = new Vector2(0, 8.25f);
 
         // cones
         float hyp = Mathf.Sqrt(Mathf.Pow(8.25f, 2) + Mathf.Pow(8, 2));
         float r = Mathf.Deg2Rad * 45f;
         float y = hyp * Mathf.Sin(r);
-        fastCreateLine(vertex, vertex + new Vector2(hyp * Mathf.Cos(r), y) / 1.25f, Color.gray);
-        fastCreateLine(vertex, vertex + new Vector2(-hyp * Mathf.Cos(r), y) / 1.25f, Color.gray);
+        drEnd = new Vector2(hyp * Mathf.Cos(r), y) / 1.25f;
+        dlEnd = new Vector2(-hyp * Mathf.Cos(r), y) / 1.25f;
+        fastCreateLine(Vector2.zero, drEnd, Color.black);
+        fastCreateLine(Vector2.zero, dlEnd, Color.black);
     }
 
     public void Update()
@@ -39,15 +43,15 @@ public class master : MonoBehaviour
         {
             // draw line
             Vector2 m = quickConvert2(Camera.main.ScreenToWorldPoint(Input.mousePosition));
-            if (m.y > vertex.y)
+            if (m.y > 0)
             {
                 Destroy(lineStatic);
                 Destroy(lineShifted);
 
-                GameObject l = fastCreateLine(vertex, m, Color.magenta);
+                GameObject l = fastCreateLine(Vector2.zero, m, Color.magenta);
                 lineStatic = l;
                 lineEndStatic = m;     // this is the normal line
-                if (shifted) redraw("shifted");
+                if (shifted) redraw();
 
                 l.GetComponent<lineMaster>().setLabelText(drawSpeed(m));
             }
@@ -72,6 +76,12 @@ public class master : MonoBehaviour
                     {
                         Destroy(points[index].staticGO);
                         if (!ReferenceEquals(points[index].shiftedGO, null)) Destroy(points[index].shiftedGO);
+
+                        // clear time lines
+                        Destroy(points[index].staticGoTime);
+
+                        // clear light cones
+                        Destroy(points[index].lightCone);
                     } 
                     points[index] = new point();
 
@@ -82,63 +92,129 @@ public class master : MonoBehaviour
                     points[index].staticGO.transform.position = points[index].staticPosition;
                     points[index].staticGO.GetComponent<RawImage>().color = colors[index];
 
-                    redraw("shifted");
+                    redraw();
                 }
             }
         }
     }
-
+    public void resetVel()
+    {
+        sm.sl.value = 0;
+    }
     public void slValueChange()
     {
-        if (shifted == true && sm.sl.value == 0)
-        {
-            shifted = false;
-        }
-        else if (shifted == false && sm.sl.value != 0)
-        {
-            shifted = true;
-        }
+        if (sm.sl.value == 0) shifted = false;
+        else if (sm.sl.value != 0) shifted = true;
 
-        redraw("shifted");
+        redraw();
     }
 
-    public void redraw(string option)
+    public void clear()
     {
-        if (option == "static")
-        {
-            // redraw static based on shifted
-        }
-        else
-        {
-            // redraw shifted based on static
+        // clear lines
+        Destroy(lineStatic);
+        Destroy(lineShifted);
+        lineEndStatic = Vector2.zero;
+        lineEndShifted = Vector2.zero;
 
-            // shifted line
-            if (!ReferenceEquals(lineShifted, null)) Destroy(lineShifted);
-            lineEndShifted = new Vector2(xPrime(lineEndStatic.y, lineEndStatic.x, sm.sl.value), timePrime(lineEndStatic.y, lineEndStatic.x, sm.sl.value));
-            lineShifted = fastCreateLine(vertex, lineEndShifted, new Color(1, 0, 1, 0.5f));
-
-            foreach (point p in points.Values)
-            {
-                Vector2 pos = new Vector2(xPrime(p.staticPosition.y, p.staticPosition.x, sm.sl.value), timePrime(p.staticPosition.y, p.staticPosition.x, sm.sl.value));
-                if (!ReferenceEquals(p.shiftedGO, null)) Destroy(p.shiftedGO);
-                p.shiftedGO = Instantiate(pointPrefab, parent.transform);
-                p.shiftedGO.transform.position = pos;
-                RawImage ri = p.shiftedGO.GetComponent<RawImage>();
-                ri.color = p.staticGO.GetComponent<RawImage>().color;
-                ri.color = new Color(ri.color.r, ri.color.g, ri.color.b, 0.25f);
-            }
+        // clear points
+        clearTime();
+        clearLightCones();
+        foreach (point p in points.Values)
+        {
+            Destroy(p.shiftedGO);
+            Destroy(p.staticGO);
         }
+        points = new Dictionary<int, point>();
     }
 
+    public void redraw()
+    {
+        // redraw shifted based on static
+
+        // time lines
+        // redundant yes, but here just in case
+        clearTime();
+        clearLightCones();
+        if (showTimeLines) drawTime();
+        if (showLightCones) drawLightCones();
+
+        // shifted line
+        if (!ReferenceEquals(lineShifted, null)) Destroy(lineShifted);
+        lineEndShifted = new Vector2(xPrime(lineEndStatic.y, lineEndStatic.x, sm.sl.value), timePrime(lineEndStatic.y, lineEndStatic.x, sm.sl.value));
+        lineShifted = fastCreateLine(Vector2.zero, lineEndShifted, new Color(1, 0, 1, 0.5f));
+
+        // points
+        foreach (point p in points.Values)
+        {
+            Vector2 pos = new Vector2(xPrime(p.staticPosition.y, p.staticPosition.x, sm.sl.value), timePrime(p.staticPosition.y, p.staticPosition.x, sm.sl.value));
+            if (!ReferenceEquals(p.shiftedGO, null)) Destroy(p.shiftedGO);
+            p.shiftedGO = Instantiate(pointPrefab, parent.transform);
+            p.shiftedGO.transform.position = pos;
+            RawImage ri = p.shiftedGO.GetComponent<RawImage>();
+            ri.color = p.staticGO.GetComponent<RawImage>().color;
+            ri.color = new Color(ri.color.r, ri.color.g, ri.color.b, 0.25f);
+        }
+
+        // axises
+        foreach (GameObject go in axises) Destroy(go);
+        axises.Add(fastCreateLine(Vector2.zero, toPrime(drEnd), Color.gray));
+        axises.Add(fastCreateLine(Vector2.zero, toPrime(dlEnd), Color.gray));
+        axises.Add(fastCreateLine(Vector2.zero, toPrime(yEnd), Color.gray));
+
+        
+    }
+    public void drawTime()
+    {
+        foreach (point p in points.Values)
+        {
+            Color _c = p.staticGO.GetComponent<RawImage>().color;
+            Color c = _c / 0.75f;
+            c.a = 0.5f;
+            p.staticGoTime = fastCreateLine(new Vector2(-100, p.staticGO.transform.position.y), new Vector2(100, p.staticGO.transform.position.y), c);
+        }
+    }
+    public void clearTime()
+    {
+        foreach (point p in points.Values) Destroy(p.staticGoTime);
+    }
+    public void toggleTime()
+    {
+        clearTime();
+        showTimeLines = !showTimeLines;
+        if (showTimeLines) drawTime();
+    }
+    
+    public void toggleLightCones()
+    {
+        clearLightCones();
+        showLightCones = !showLightCones;
+        if (showLightCones) drawLightCones();
+    }
+    public void clearLightCones()
+    {
+        foreach (point p in points.Values) Destroy(p.lightCone);
+    }
+    public void drawLightCones()
+    {
+        foreach (point p in points.Values)
+        {
+            p.lightCone = Instantiate(lightConePrefab, parent.transform);
+            p.lightCone.transform.position = p.staticGO.transform.position;
+        }
+    }
     public string drawSpeed(Vector2 v)
     {
-        float slope = (v.y - vertex.y) / v.x;
+        float slope = v.y / v.x;
         float coef = (float) Math.Round((double) (1f / slope), 2);
         return (inTermsC) ? $"{coef}c m/s" : $"{300_000_000 * coef} m/s";
     }
+    
+    public Vector2 toPrime(Vector2 v) => new Vector2(xPrime(v.y, v.x, sm.sl.value), timePrime(v.y, v.x, sm.sl.value));
 
     public void changeTermC(TextMeshProUGUI txt)
     {
+        if (lineStatic == null) return;
         inTermsC = !inTermsC;
         if (inTermsC) txt.text = "Relative Velocity";
         else txt.text = "Absolute Velocity";
@@ -184,5 +260,5 @@ public class master : MonoBehaviour
 public class point
 {
     public Vector2 staticPosition, shiftedPosition;
-    public GameObject shiftedGO, staticGO;
+    public GameObject shiftedGO, staticGO, staticGoTime, lightCone;
 }
